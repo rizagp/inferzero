@@ -36,7 +36,10 @@
       hp.n_ff_exp_pad = padded_k(hp.n_ff_exp);
       // (Flash Next: FFN widths of 640, its down projections padded to 768 and its shared expert to 768 rows)
       if (hp.hc) hp.n_ff_shexp = padded_k(hp.n_ff_shexp);
-      if ((hp.n_expert != 256 && !(hp.hc && hp.n_expert == 512)) || hp.n_expert_used < 1 || hp.n_expert_used > 16 ||
+      // (16..256 experts: a pruned Qwen3.6 MoE, e.g. CoderX with 184, routes with masked lanes, kernels/moe.cl NEV;
+      //  Flash Next 512; the scan's work-group is NE wide)
+      const bool ne_ok = hp.hc ? hp.n_expert == 512 : hp.n_expert >= 16 && hp.n_expert <= 256;
+      if (!ne_ok || hp.n_expert_used < 1 || hp.n_expert_used > std::min(16, hp.n_expert) ||
           (hp.n_ff_exp % 256 && !hp.hc) || hp.n_ff_shexp % 256 || (hp.hc && !hp.moe_std))
         throw std::runtime_error("unsupported MoE dimensions");
     }

@@ -44,6 +44,17 @@ __attribute__((intel_reqd_sub_group_size(SG)))
 #define SGATE(lg) (1.0f / (1.0f + exp(-(lg)[NE])))
 #endif
 #define ROUTE_P(g, mx) exp((g) - (mx))
+// Router logits per lane: NEV = ceil(NE / 16) per lane. An expert count that is not a multiple of 16 (a pruned
+// model, e.g. Qwen3.6-27B-A3B CoderX with 184 of the 35B's 256) masks the last lanes' ids >= NE to -inf: column NE
+// of a logits row is the shared-expert gate, the rest up to router_rows() padding. NE % 16 == 0: both macros expand
+// to the code as it was, token for token.
+#if NE % SG
+#define NEV ((NE + SG - 1) / SG)
+#define ROUTE_LOAD(lg, e) ((e) < NE ? ROUTE_V(lg[e], e) : -INFINITY)
+#else
+#define NEV NE / SG
+#define ROUTE_LOAD(lg, e) ROUTE_V(lg[e], e)
+#endif
 #if NU > 16
 #error "moe_route writes choice k from lane k of a 16-lane sub-group: at most 16 experts per token"
 #endif
@@ -52,11 +63,11 @@ __kernel void moe_route(__global const float* logits, int ldl, int T, __global i
   const int t = get_group_id(1), l = get_sub_group_local_id();
   if (t >= T) return;
   __global const float* lg = logits + (size_t)t * ldl;
-  float v[NE / SG];
+  float v[NEV];
   float mx = -INFINITY;
 #pragma unroll
-  for (int i = 0; i < NE / SG; ++i) {
-    v[i] = ROUTE_V(lg[i * SG + l], i * SG + l);
+  for (int i = 0; i < NEV; ++i) {
+    v[i] = ROUTE_LOAD(lg, i * SG + l);
     mx = fmax(mx, v[i]);
   }
   mx = sub_group_reduce_max(mx);
@@ -67,12 +78,12 @@ __kernel void moe_route(__global const float* logits, int ldl, int T, __global i
     float bv = -INFINITY;
     int bi = NE;
 #pragma unroll
-    for (int i = 0; i < NE / SG; ++i)
+    for (int i = 0; i < NEV; ++i)
       if (v[i] > bv) { bv = v[i]; bi = i * SG + l; }
     const float gv = sub_group_reduce_max(bv);
     const int gi = sub_group_reduce_min(bv == gv ? bi : NE);
 #pragma unroll
-    for (int i = 0; i < NE / SG; ++i)
+    for (int i = 0; i < NEV; ++i)
       if (i * SG + l == gi) v[i] = -INFINITY;
     sel[k] = min(gi, NE - 1);  // (a row of NaN logits picks no lane: NE would index past counts and the experts)
     p[k] = ROUTE_PK(gv, mx, lg, sel[k]);
@@ -94,11 +105,11 @@ __attribute__((intel_reqd_sub_group_size(SG)))
 __kernel void moe_route1(__global const float* logits, __global float* sgate, __global int* tiles,
                          __global int* stok, __global float* swt, __global int* inv ESCALE_ARG ROUTE_ARG) {
   const int l = get_sub_group_local_id();
-  float v[NE / SG];
+  float v[NEV];
   float mx = -INFINITY;
 #pragma unroll
-  for (int i = 0; i < NE / SG; ++i) {
-    v[i] = ROUTE_V(logits[i * SG + l], i * SG + l);
+  for (int i = 0; i < NEV; ++i) {
+    v[i] = ROUTE_LOAD(logits, i * SG + l);
     mx = fmax(mx, v[i]);
   }
   mx = sub_group_reduce_max(mx);
@@ -109,12 +120,12 @@ __kernel void moe_route1(__global const float* logits, __global float* sgate, __
     float bv = -INFINITY;
     int bi = NE;
 #pragma unroll
-    for (int i = 0; i < NE / SG; ++i)
+    for (int i = 0; i < NEV; ++i)
       if (v[i] > bv) { bv = v[i]; bi = i * SG + l; }
     const float gv = sub_group_reduce_max(bv);
     const int gi = sub_group_reduce_min(bv == gv ? bi : NE);
 #pragma unroll
-    for (int i = 0; i < NE / SG; ++i)
+    for (int i = 0; i < NEV; ++i)
       if (i * SG + l == gi) v[i] = -INFINITY;
     sel[k] = min(gi, NE - 1);  // (as moe_route)
     p[k] = ROUTE_PK(gv, mx, logits, sel[k]);
