@@ -597,7 +597,9 @@
   void adopt_mtp_file() {
     const std::string a = f_.get_str("general.architecture");
     // (--draft dflash without a DFlash2 folder still drafts with the block, as init() decides after this)
-    if (a != "qwen4exp" || !opt.mtp || (!opt.mtp_block && !opt.dflash.empty())) return;
+    // (qwen35: a fine-tune shipped without its nextn block, e.g. NousResearch Arete-27B, takes the base Qwen3.8 27B
+    //  GGUF's block: --mtp-model <base model .gguf>; drafts are verified, so the output stays the model's own)
+    if ((a != "qwen4exp" && a != "qwen35") || !opt.mtp || (!opt.mtp_block && !opt.dflash.empty())) return;
     const int64_t nb = f_.get_int(a + ".block_count", 0);
     if (nb <= 0 || f_.get_int(a + ".nextn_predict_layers", 0) > 0) return;  // (a block of its own)
     const std::string mp = "blk." + std::to_string(nb) + ".";
@@ -607,7 +609,7 @@
         if (g->get_str("general.architecture") != a || g->get_int(a + ".block_count", 0) != nb + 1 ||
             g->get_int(a + ".nextn_predict_layers", 0) != 1 ||
             g->get_int(a + ".embedding_length", -1) != f_.get_int(a + ".embedding_length", -2) ||
-            g->get_int(a + ".expert_count", -1) != f_.get_int(a + ".expert_count", -2) ||
+            g->get_int(a + ".expert_count", -1) != f_.get_int(a + ".expert_count", -1) ||  // (dense: both absent)
             !g->find(mp + "nextn.eh_proj.weight"))
           return false;
         mtp_file_ = std::move(g);

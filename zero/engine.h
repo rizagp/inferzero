@@ -320,7 +320,8 @@ __kernel void rd_strip(__global const uint* p, __global uint* out, int per_item)
     load_hparams();
     // Flash Next precision includes attention: per-row int8 Q/K/V can amplify small errors through routing.
     if (hp.hc && fn_precise()) opt.attn_int8 = false;
-    if (mtp_ext_) {  // (its layer, il = n_layer: full attention, QSA with the file's compress ratio)
+    // (Flash Next only: a qwen35 head, e.g. Arete-27B with the base Qwen3.8 27B block, has no QSA)
+    if (mtp_ext_ && mtp_file_->get_str("general.architecture") == "qwen4exp") {  // (its layer, il = n_layer: full attention, QSA with the file's compress ratio)
       hp.qsa_ratio.resize(hp.n_layer + 1, 0);
       const auto* cr = mtp_file_->get_ints("qwen4exp.attention.compress_ratios");
       if (cr && (int)cr->size() > hp.n_layer && f_.find("blk." + std::to_string(hp.n_layer) + ".indexer.k_proj.weight")) {
