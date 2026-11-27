@@ -57,7 +57,7 @@ You need:
 
 Discrete Arc cards work too, experimentally: the B-series (Xe2: B580, Pro B60, Pro B70) and the A-series
 (Alchemist: A770, A750, A580). A user runs 1-4 Arc Pro B60s, another two A770s, and one model can be split over
-several cards (`--gpus N`). See [Discrete GPUs](#discrete-arc-gpus-experimental).
+several cards (`--gpus N`). See [Discrete GPUs](#discrete-arc-gpus-experimental) and the [Intel Arc Pro B50 Linux guide](docs/intel-arc-pro-b50.md).
 
 **Linux** (Ubuntu 24.04 or newer): download `inferzero-<version>-linux-x64.tar.gz` from the same release, unpack it,
 and run `./zero-launcher.sh` (a terminal menu that downloads a model and starts the headless server). It needs Intel's
