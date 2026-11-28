@@ -638,8 +638,182 @@ sets. It's classified by three existing lists: `scripts/options.tsv` (user-facin
 contributors), and xe2-tuning.md's defaults per kind. A switch in none of the three is test-only or forgotten: a
 candidate to retire, each checked. This is the seed of the switch registry (plan section 6).
 
+### The code side (the Developer, 2026-11-28, read at main ebd3bb5)
+
+Every `getenv("ARC_...")` site in `zero/`, `tools/` and `src/`: 475 sites of 350 switches. Of them, **154 steer a GEMM,
+GEMV or expert choice**: every switch read in the H8, XMX wide-tile, MoE-XMX, host-CPU, CPU-expert and NPU files and in
+`engine_moe.h`, and by name the GEMM / GEMV / W8 / XMX / MoE / stacking / two-pass / f32-GEMV switches. Left out: the
+expert cache's memory switches, the DeltaNet and attention kernels, the splits' sums, the profiling labels and the
+failsafes. The columns: **Read in**, the first sites (file:line); **Sets**, the functions that read it; **Default where**,
+the first site's code, where the default usually is; **Class**, from the three lists.
+
+- **By class:** 8 user-facing (`options.tsv`), 54 tuned by contributors (`gpu_sweep`), 42 a GPU kind's default
+  (xe2-tuning.md), **50 in none of the three**.
+- **The 50 in none:** 40 are named in a doc or the CHANGELOG (A/B and test switches with a measurement behind them).
+  **10 are named nowhere outside the code**, the first candidates to retire or to list: `ARC_140T_MIN`, `ARC_DBG_MOE`,
+  `ARC_G4_RG_GU`, `ARC_G4_RTILE`, `ARC_H8_E2E`, `ARC_MOE_ASCT`, `ARC_MOE_G`, `ARC_MOE_RG_MAX`, `ARC_MOE_RG_NY`,
+  `ARC_RG_IMUL`. Not all are idle: `ARC_MOE_RG_MAX` sets the chunk size where decode + GEMM takes over from
+  `moe_rg` (1,280), and `ARC_H8_E2E=0` skips a start check. Those two belong in a list, not in the bin.
+- **Data:** `H-sites.tsv` (every site, with its function and the three lists) and `H-switches.tsv` / `H-unlisted.tsv`
+  in the inventory's data folder; `scripts\gen-switch-list.ps1`'s `src/arc_switches.h` holds every name any program reads
+  (serverz marks an unknown one at start).
+
 | Switch | Read in | Sets | Steers | Default where | Class |
 |---|---|---|---|---|---|
+| `ARC_MOE_BIG_CHUNK` | tools/server_catalog.h:971 | moe_big_chunk_env | expert path | `static const int v = getenv("ARC_MOE_BIG_CHUNK") ? atoi(getenv("ARC_MOE_BIG_CHUNK")) : -1;` | user |
+| `ARC_MOE_DPASW` | engine_setup.h:594 | moe_dpasw_on | expert path | `static const bool on = getenv("ARC_MOE_DPASW") && atoi(getenv("ARC_MOE_DPASW")) != 0;` | sweep |
+| `ARC_MOE_G` | engine_alloc.h:156 | alloc_buffers | expert path | `static const int g_env = getenv("ARC_MOE_G") ? atoi(getenv("ARC_MOE_G")) : 64;` | **none: to check** |
+| `ARC_MOE_GEMM_PAD` | engine_alloc.h:168, engine_moe.h:545 | alloc_buffers, moe_gemm_pad_on | expert path | `} else if (moe_gemm_pad_on() && getenv("ARC_MOE_GEMM_PAD") && !opt.dry) {  // (asked for by name: say why not)` | sweep |
+| `ARC_MOE_GRF` | xe2/engine_xe2.h:224 | xe2_moe_grf | expert path | `static const char* e = getenv("ARC_MOE_GRF");  // (read once)` | sweep |
+| `ARC_MOE_RG_XMX` | engine.h:523, xe2/engine_moe_xw.h:25 | init, moe_rgx_on | expert path | `const bool rg = getenv("ARC_MOE_RG_XMX") && atoi(getenv("ARC_MOE_RG_XMX")) != 0 && !rgx_emu();` | sweep |
+| `ARC_MOE_X8` | engine_setup.h:585 | moe_x8_env | expert path | `static const bool on = getenv("ARC_MOE_X8") && atoi(getenv("ARC_MOE_X8")) != 0;` | sweep |
+| `ARC_DBG_MOE` | engine.h:1874, engine_moe.h:507 | layer_moe, run_layer | expert path (per tile / moe_rg / decode + GEMM) | `static const int dbg_mix = getenv("ARC_DBG_MOE") ? atoi(getenv("ARC_DBG_MOE")) : -1;` | **none: to check** |
+| `ARC_DUMP_ROUTES` | engine_moe.h:151 | layer_moe | expert path (per tile / moe_rg / decode + GEMM) | `static FILE* routes = getenv("ARC_DUMP_ROUTES") ? fopen(getenv("ARC_DUMP_ROUTES"), "ab") : nullptr;` | **none: to check** |
+| `ARC_G4_RG_GU` | engine_moe.h:200 | layer_moe | expert path (per tile / moe_rg / decode + GEMM) | `static const bool g4_rg_gu = !getenv("ARC_G4_RG_GU") \|\| atoi(getenv("ARC_G4_RG_GU")) != 0;` | **none: to check** |
+| `ARC_G4_RTILE` | engine_moe.h:28 | layer_moe | expert path (per tile / moe_rg / decode + GEMM) | `static const bool g4_rt = !getenv("ARC_G4_RTILE") \|\| atoi(getenv("ARC_G4_RTILE")) != 0;` | **none: to check** |
+| `ARC_MOE_ASCT` | engine_moe.h:253 | layer_moe | expert path (per tile / moe_rg / decode + GEMM) | `static const bool asct_on = !getenv("ARC_MOE_ASCT") \|\| atoi(getenv("ARC_MOE_ASCT")) != 0;` | **none: to check** |
+| `ARC_MOE_CG` | engine_moe.h:657 | moe_gemm | expert path (per tile / moe_rg / decode + GEMM) | `static const int mcg_e = getenv("ARC_MOE_CG") ? std::clamp(atoi(getenv("ARC_MOE_CG")), 1, 4) : 0;` | sweep |
+| `ARC_MOE_GEMM_MIN` | engine_moe.h:182 | layer_moe | expert path (per tile / moe_rg / decode + GEMM) | `static const int gemm_min = getenv("ARC_MOE_GEMM_MIN") ? atoi(getenv("ARC_MOE_GEMM_MIN")) : 1152;` | per kind |
+| `ARC_MOE_GR_DN` | engine_moe.h:176 | layer_moe | expert path (per tile / moe_rg / decode + GEMM) | `gr_dn_e = getenv("ARC_MOE_GR_DN") ? std::clamp(atoi(getenv("ARC_MOE_GR_DN")), 1, 8) : 0;` | sweep |
+| `ARC_MOE_GR_DN_S` | engine_moe.h:292 | layer_moe | expert path (per tile / moe_rg / decode + GEMM) | `static const int gr_dn_s = getenv("ARC_MOE_GR_DN_S") ? std::clamp(atoi(getenv("ARC_MOE_GR_DN_S")), 1, 8) : 4;` | per kind |
+| `ARC_MOE_GR_GU` | engine_moe.h:175 | layer_moe | expert path (per tile / moe_rg / decode + GEMM) | `static const int gr_gu_e = getenv("ARC_MOE_GR_GU") ? std::clamp(atoi(getenv("ARC_MOE_GR_GU")), 1, 8) : 0,` | sweep |
+| `ARC_MOE_RG_MAX` | engine_moe.h:189 | layer_moe | expert path (per tile / moe_rg / decode + GEMM) | `rg_max = getenv("ARC_MOE_RG_MAX") ? atoi(getenv("ARC_MOE_RG_MAX")) : 1280;` | **none: to check** |
+| `ARC_MOE_RG_MIN` | engine_moe.h:81, engine_moe.h:188 | layer_moe | expert path (per tile / moe_rg / decode + GEMM) | `static const int rg_min0 = getenv("ARC_MOE_RG_MIN") ? atoi(getenv("ARC_MOE_RG_MIN")) : 320;` | per kind |
+| `ARC_MOE_RG_NY` | engine_moe.h:576 | moe_rg | expert path (per tile / moe_rg / decode + GEMM) | `static const int ny_env = getenv("ARC_MOE_RG_NY") ? atoi(getenv("ARC_MOE_RG_NY")) : 0;` | **none: to check** |
+| `ARC_MOE_TM` | engine_moe.h:78 | layer_moe | expert path (per tile / moe_rg / decode + GEMM) | `static const int tm_std = getenv("ARC_MOE_TM") ? std::max(1, atoi(getenv("ARC_MOE_TM"))) : 16;  // (standar...` | sweep |
+| `ARC_MOE_TM_SMALL` | engine_moe.h:88, engine_moe.h:89 | layer_moe | expert path (per tile / moe_rg / decode + GEMM) | `if (!getenv("ARC_MOE_TM_SMALL")) return -1;` | per kind |
+| `ARC_MOE_WY` | engine_moe.h:659 | moe_gemm | expert path (per tile / moe_rg / decode + GEMM) | `static const int mwy_e = getenv("ARC_MOE_WY") ? std::max(1, atoi(getenv("ARC_MOE_WY"))) : 1;  // (read once)` | sweep |
+| `ARC_NVFP4_FOLD` | engine_moe.h:227 | layer_moe | expert path (per tile / moe_rg / decode + GEMM) | `static const bool nv_fold = getenv("ARC_NVFP4_FOLD") && atoi(getenv("ARC_NVFP4_FOLD")) != 0;` | **none: to check** |
+| `ARC_RG_IMUL` | engine_moe.h:579 | moe_rg | expert path (per tile / moe_rg / decode + GEMM) | `static const std::string imul = getenv("ARC_RG_IMUL") && atoi(getenv("ARC_RG_IMUL")) != 0 ? " -DRG_IMUL" : "";` | **none: to check** |
+| `ARC_TP_RG_GU` | engine_moe.h:203 | layer_moe | expert path (per tile / moe_rg / decode + GEMM) | `static const bool tp_rg_gu = !getenv("ARC_TP_RG_GU") \|\| atoi(getenv("ARC_TP_RG_GU")) != 0;` | per kind |
+| `ARC_XLIST_SYNC` | engine_moe.h:380 | layer_moe | expert path (per tile / moe_rg / decode + GEMM) | `static const bool list_sync = getenv("ARC_XLIST_SYNC") && atoi(getenv("ARC_XLIST_SYNC")) != 0;` | per kind |
+| `ARC_XSPLIT` | engine_moe.h:312 | layer_moe | expert path (per tile / moe_rg / decode + GEMM) | `static const bool xsplit = !getenv("ARC_XSPLIT") \|\| atoi(getenv("ARC_XSPLIT")) != 0;` | **none: to check** |
+| `ARC_XSPLIT_TAB` | engine_moe.h:436 | layer_moe | expert path (per tile / moe_rg / decode + GEMM) | `static const int xs_tab = getenv("ARC_XSPLIT_TAB") ? atoi(getenv("ARC_XSPLIT_TAB")) : 1;` | per kind |
+| `ARC_XSPLIT_TP` | engine_moe.h:524 | xsplit_tp | expert path (per tile / moe_rg / decode + GEMM) | `static const bool on = getenv("ARC_XSPLIT_TP") && atoi(getenv("ARC_XSPLIT_TP")) != 0;` | **none: to check** |
+| `ARC_XCPU` | xe2/engine_xcpu.h:51 | xcpu_on | experts on the CPU | `static const int e = getenv("ARC_XCPU") ? (atoi(getenv("ARC_XCPU")) != 0 ? 1 : 0) : -1;` | user |
+| `ARC_XCPU_Q2` | xe2/engine_xcpu.h:63 | xcpu_q2 | experts on the CPU | `static const bool on = getenv("ARC_XCPU_Q2") && atoi(getenv("ARC_XCPU_Q2")) != 0;` | user |
+| `ARC_XCPU_THREADS` | xe2/engine_xcpu.h:67 | xcpu_threads | experts on the CPU | `static const int t = getenv("ARC_XCPU_THREADS") ? std::max(1, atoi(getenv("ARC_XCPU_THREADS")))` | **none: to check** |
+| `ARC_MOE_RG_XEMU` | xe2/engine_moe_xw.h:21, xe2/engine_moe_xw.h:72 | rgx_defs, rgx_emu | experts on XMX | `static const bool e = getenv("ARC_MOE_RG_XEMU") && atoi(getenv("ARC_MOE_RG_XEMU")) != 0;` | per kind |
+| `ARC_FN_AB32` | engine_load.h:603 | fn_ab32 | f32 GEMV forms | `static const bool env = getenv("ARC_FN_AB32") && atoi(getenv("ARC_FN_AB32")) != 0;` | **none: to check** |
+| `ARC_FN_RT32` | engine_stream.h:547 | load_moe | f32 GEMV forms | `static const bool rt32 = getenv("ARC_FN_RT32") && atoi(getenv("ARC_FN_RT32")) != 0;` | **none: to check** |
+| `ARC_INK_F32SG` | engine_inkling.h:699 | ink_mm | f32 GEMV forms | `static const bool sg = !(getenv("ARC_INK_F32SG") && atoi(getenv("ARC_INK_F32SG")) == 0);` | **none: to check** |
+| `ARC_SELF_CHECK` | engine_setup.h:617, engine_setup.h:680 | gemm_self_check | GEMM start check | `if (getenv("ARC_SELF_CHECK") && atoi(getenv("ARC_SELF_CHECK")) == 0) return;` | **none: to check** |
+| `ARC_GEMV_DB` | xe2/engine_xe2.h:274 | xe2_gemv_pf | GEMV | `static const int dbe = getenv("ARC_GEMV_DB") ? (atoi(getenv("ARC_GEMV_DB")) != 0 ? 1 : 0) : -1;` | sweep |
+| `ARC_GEMV_DEEP` | xe2/engine_xe2.h:268 | xe2_gemv_pf | GEMV | `static const int deep = getenv("ARC_GEMV_DEEP") ? atoi(getenv("ARC_GEMV_DEEP")) : 0;` | sweep |
+| `ARC_GEMV_GU` | engine.h:1518 | host_gemv_note | GEMV | `static const bool on = getenv("ARC_GEMV_GU") && atoi(getenv("ARC_GEMV_GU")) != 0;` | user |
+| `ARC_GEMV_MT_GRF` | xe2/engine_xe2.h:395 | xe2_gemv_mt_grf | GEMV | `static const std::string e = getenv("ARC_GEMV_MT_GRF") ? getenv("ARC_GEMV_MT_GRF") : "";` | sweep |
+| `ARC_GEMV_PF` | xe2/engine_xe2.h:275, xe2/engine_xe2.h:277 | xe2_gemv_pf | GEMV | `static const bool probe = getenv("ARC_GV_PROBE") != nullptr, pf_set = getenv("ARC_GEMV_PF") != nullptr;` | sweep |
+| `ARC_GEMV_ROWS` | engine.h:1492, engine.h:1557 | gemv_splitk, gemv1_rows | GEMV | `static const int force_rows = getenv("ARC_GEMV_ROWS") ? atoi(getenv("ARC_GEMV_ROWS")) : 0;` | **none: to check** |
+| `ARC_GEMV_SMALL_WG` | xe2/engine_xe2.h:350 | xe2_gemv_wg | GEMV | `static const bool on = getenv("ARC_GEMV_SMALL_WG") && atoi(getenv("ARC_GEMV_SMALL_WG")) != 0;` | sweep |
+| `ARC_GEMV_SPLITK` | engine.h:1556, engine.h:1578 | gemv_splitk | GEMV | `static const bool on = getenv("ARC_GEMV_SPLITK") && atoi(getenv("ARC_GEMV_SPLITK")) != 0;` | per kind |
+| `ARC_GEMV_SPLITK_FORCE` | engine.h:1573 | gemv_splitk | GEMV | `static const int force = getenv("ARC_GEMV_SPLITK_FORCE") ? atoi(getenv("ARC_GEMV_SPLITK_FORCE")) : 0;` | per kind |
+| `ARC_GEMV_WAVE` | xe2/engine_xe2.h:303, xe2/engine_xe2.h:311 | xe2_gemv_rows, xe2_gemv_threads | GEMV | `static const int e = getenv("ARC_GEMV_WAVE") ? (atoi(getenv("ARC_GEMV_WAVE")) != 0 ? 1 : 0) : -1;` | sweep |
+| `ARC_GEMV_WAVE_MT` | xe2/engine_xe2.h:329 | xe2_gemv_mt_rows | GEMV | `static const bool off = getenv("ARC_GEMV_WAVE_MT") && atoi(getenv("ARC_GEMV_WAVE_MT")) == 0;` | per kind |
+| `ARC_GV_IQ3S` | engine.h:1451 | gemv1_rows | GEMV | `static const bool gv_iq3s = getenv("ARC_GV_IQ3S") && atoi(getenv("ARC_GV_IQ3S")) != 0;` | sweep |
+| `ARC_GV_K4` | engine.h:1460 | gemv1_rows | GEMV | `static const int gv_k4 = getenv("ARC_GV_K4") ? atoi(getenv("ARC_GV_K4")) : -1;` | **none: to check** |
+| `ARC_GV_PROBE` | engine.h:1613, xe2/engine_xe2.h:271, xe2/engine_xe2.h:275 | matmul1, xe2_gemv_pf | GEMV | `static const int gv_probe = getenv("ARC_GV_PROBE") ? atoi(getenv("ARC_GV_PROBE")) : 0;` | per kind |
+| `ARC_GV_SGNPOP` | xe2/engine_xe2.h:287 | xe2_gv_sgn | GEMV | `static const std::string s = getenv("ARC_GV_SGNPOP") && atoi(getenv("ARC_GV_SGNPOP")) != 0 ? " -DGV_SGNPOP"...` | per kind |
+| `ARC_GV_SMALL` | engine.h:1473 | gemv1_rows | GEMV | `static const int gv_small_env = getenv("ARC_GV_SMALL") ? atoi(getenv("ARC_GV_SMALL")) : 0;` | **none: to check** |
+| `ARC_GV_SMALL_ANY` | engine.h:1474 | gemv1_rows | GEMV | `static const bool gv_small_any = getenv("ARC_GV_SMALL_ANY") && atoi(getenv("ARC_GV_SMALL_ANY")) != 0;` | **none: to check** |
+| `ARC_GV4` | engine.h:1343 | gemv_v_rows | GEMV | `static const bool gv4 = !getenv("ARC_GV4") \|\| atoi(getenv("ARC_GV4")) != 0;` | **none: to check** |
+| `ARC_GVROWS` | engine.h:1330, engine.h:1335, engine.h:1488 (+1) | gemv_v_rows, gemv1_rows, xe2_gemv_rows | GEMV | `const int v = getenv("ARC_GVROWS") ? atoi(getenv("ARC_GVROWS")) : 0;` | sweep |
+| `ARC_HOST_GEMV_MB` | engine.h:1501 | host_gemv_mb | GEMV | `static const double env = getenv("ARC_HOST_GEMV_MB") ? std::max(0.0, atof(getenv("ARC_HOST_GEMV_MB"))) : -1.0;` | **none: to check** |
+| `ARC_H8` | engine_h8.h:60, xe2/engine_xe2.h:61, xe2/engine_xe2.h:70 | h8_auto_wanted, h8_dp4a_wanted, h8_env | H8 prompt GEMM | `static const bool on = getenv("ARC_H8") && atoi(getenv("ARC_H8")) != 0;` | user |
+| `ARC_H8_D` | engine_h8.h:159, engine_h8.h:204, engine_h8.h:336 (+1) | h8_norm_env, h8_out_kernel, h8r_decode, h8r_kernel | H8 prompt GEMM | `static const bool d = getenv("ARC_H8_D") && atoi(getenv("ARC_H8_D")) != 0;` | per kind |
+| `ARC_H8_DEC_PRIV` | engine_h8.h:207 | h8r_decode | H8 prompt GEMM | `static const bool priv = getenv("ARC_H8_DEC_PRIV") && atoi(getenv("ARC_H8_DEC_PRIV")) != 0;` | per kind |
+| `ARC_H8_DEC_R` | engine_h8.h:210 | h8r_decode | H8 prompt GEMM | `const int e = getenv("ARC_H8_DEC_R") ? atoi(getenv("ARC_H8_DEC_R")) : 4;` | per kind |
+| `ARC_H8_E2E` | engine_h8.h:394 | h8_e2e_check | H8 prompt GEMM | `static const bool off = getenv("ARC_H8_E2E") && atoi(getenv("ARC_H8_E2E")) == 0;` | **none: to check** |
+| `ARC_H8_FUSE` | engine_h8.h:194, engine_h8.h:198 | h8_dec_ok | H8 prompt GEMM | `static const bool on = !getenv("ARC_H8_FUSE") \|\| atoi(getenv("ARC_H8_FUSE")) != 0;` | sweep |
+| `ARC_H8_GRF` | engine_h8.h:154 | h8_grf | H8 prompt GEMM | `static const int env = getenv("ARC_H8_GRF") ? atoi(getenv("ARC_H8_GRF")) : 0;` | sweep |
+| `ARC_H8_HB` | engine_h8.h:110 | h8_block | H8 prompt GEMM | `const int v = getenv("ARC_H8_HB") ? atoi(getenv("ARC_H8_HB")) : 1024;` | per kind |
+| `ARC_H8_INT` | engine_h8.h:76 | h8_float | H8 prompt GEMM | `static const bool i8 = getenv("ARC_H8_INT") && atoi(getenv("ARC_H8_INT")) != 0;` | per kind |
+| `ARC_H8_MIN` | engine_h8.h:287 | h8_igpu_rows_ok | H8 prompt GEMM | `static const int min_rows = getenv("ARC_H8_MIN") ? std::max(0, atoi(getenv("ARC_H8_MIN"))) : 256;` | user |
+| `ARC_H8_NORM` | engine_h8.h:320 | h8_norm_env | H8 prompt GEMM | `static const char* e = getenv("ARC_H8_NORM");` | sweep |
+| `ARC_H8_OUT` | engine_h8.h:359 | h8_out_env | H8 prompt GEMM | `static const int e = getenv("ARC_H8_OUT") ? atoi(getenv("ARC_H8_OUT")) : -1;` | per kind |
+| `ARC_H8_Q2` | engine_h8.h:46 | h8_q2_var | H8 prompt GEMM | `static const bool on = getenv("ARC_H8_Q2") && atoi(getenv("ARC_H8_Q2")) != 0;` | user |
+| `ARC_H8_REUSE` | engine_h8.h:243 | h8_reuse_env | H8 prompt GEMM | `static const char* e = getenv("ARC_H8_REUSE");` | sweep |
+| `ARC_H8_SB` | engine_h8.h:64 | h8_row | H8 prompt GEMM | `static const bool sb = getenv("ARC_H8_SB") && atoi(getenv("ARC_H8_SB")) != 0;` | per kind |
+| `ARC_H8_SWI` | engine_h8.h:291 | h8_swi_ok | H8 prompt GEMM | `static const bool on = !getenv("ARC_H8_SWI") \|\| atoi(getenv("ARC_H8_SWI")) != 0;` | sweep |
+| `ARC_HOST_CPU` | xe2/engine_hostcpu.h:54 | host_cpu_on | host-memory GEMV on the CPU | `static const int e = getenv("ARC_HOST_CPU") ? (atoi(getenv("ARC_HOST_CPU")) != 0 ? 1 : 0) : -1;` | per kind |
+| `ARC_HOST_CPU_NATIVE` | xe2/engine_hostcpu.h:36 | host_native_on | host-memory GEMV on the CPU | `static const bool e = getenv("ARC_HOST_CPU_NATIVE") && atoi(getenv("ARC_HOST_CPU_NATIVE")) != 0;` | per kind |
+| `ARC_HOST_CPU_THREADS` | xe2/engine_hostcpu.h:239 | host_cpu_gemv | host-memory GEMV on the CPU | `static const int nthr = getenv("ARC_HOST_CPU_THREADS") ? std::max(0, atoi(getenv("ARC_HOST_CPU_THREADS")))` | per kind |
+| `ARC_INK_FUSE` | engine_inkling.h:727, engine_inkling.h:776, engine_inkling.h:803 (+2) | ink_control, ink_layer, ink_rmsnorm_q, ink_take | Inkling's GEMM forms | `static const bool unfused = getenv("ARC_INK_FUSE") && atoi(getenv("ARC_INK_FUSE")) == 0;` | **none: to check** |
+| `ARC_INK_RESIDENT` | engine_inkling.h:196 | load_hparams_inkling | Inkling's GEMM forms | `static const bool resident = getenv("ARC_INK_RESIDENT") && atoi(getenv("ARC_INK_RESIDENT")) != 0;` | **none: to check** |
+| `ARC_NPU` | tools/server.cpp:1541, tools/server_speech.h:79, npu/engine_npu.h:18 | npu_level, server_main | NPU share of the FFN GEMMs | `if ((so.eo.npu > 0 \|\| (so.eo.npu < 0 && getenv("ARC_NPU") && atoi(getenv("ARC_NPU")) != 0)) && ze_load()) z...` | **none: to check** |
+| `ARC_NPU_DOWN` | npu/engine_npu.h:127 | npu_setup | NPU share of the FFN GEMMs | `const int nd = cols(E, getenv("ARC_NPU_DOWN") ? atof(getenv("ARC_NPU_DOWN")) : hp.gemma ? gdef : 0.275);` | **none: to check** |
+| `ARC_NPU_MIN` | npu/engine_npu.h:114 | npu_setup | NPU share of the FFN GEMMs | `if (getenv("ARC_NPU_MIN")) npu_min_ = std::max(16, atoi(getenv("ARC_NPU_MIN")));` | **none: to check** |
+| `ARC_NPU_QKV` | npu/engine_npu.h:128 | npu_setup | NPU share of the FFN GEMMs | `const int nq = cols(Cq, getenv("ARC_NPU_QKV") ? atof(getenv("ARC_NPU_QKV")) : 0.29);` | **none: to check** |
+| `ARC_NPU_SHARE` | npu/engine_npu.h:113, npu/engine_npu.h:118 | npu_setup | NPU share of the FFN GEMMs | `const double share = getenv("ARC_NPU_SHARE") ? atof(getenv("ARC_NPU_SHARE")) : 1.0 / 3.0;` | per kind |
+| `ARC_GEMM_CG` | xe2/engine_xe2.h:76, xe2/engine_xe2.h:232, xe2/engine_xe2.h:238 | h8_cg_for, xe2_cg_for | prompt GEMM | `static const bool cg_env = getenv("ARC_GEMM_CG") != nullptr;` | sweep |
+| `ARC_GEMM_DEFS` | engine_setup.h:513 | gemm_extra | prompt GEMM | `static const std::string e = getenv("ARC_GEMM_DEFS") ? std::string(" ") + getenv("ARC_GEMM_DEFS") : std::st...` | **none: to check** |
+| `ARC_GEMM_GRF` | xe2/engine_xe2.h:113 | xe2_gemm_grf | prompt GEMM | `static const std::string e = getenv("ARC_GEMM_GRF") ? getenv("ARC_GEMM_GRF") : "";` | sweep |
+| `ARC_GEMM_PLAN` | gemm_plan.h:18 | plan_on | prompt GEMM | `static const bool on = getenv("ARC_GEMM_PLAN") && atoi(getenv("ARC_GEMM_PLAN")) != 0;` | **none: to check** |
+| `ARC_GEMM_RG` | engine.h:1742, engine_h8.h:622, xe2/engine_xe2.h:886 (+2) | h8_matmul1, matmul1, x16_act, xw_gu_matmul, xw_rg | prompt GEMM | `static const int rg_env = getenv("ARC_GEMM_RG") ? std::max(1, atoi(getenv("ARC_GEMM_RG"))) : 4;` | sweep |
+| `ARC_GEMM_SPLIT` | engine.h:1752, engine_h8.h:568, xe2/engine_xe2.h:888 | h8_splits, matmul1, x16_act | prompt GEMM | `static const int sk_sb = getenv("ARC_GEMM_SPLIT") ? std::clamp(atoi(getenv("ARC_GEMM_SPLIT")), 0, 4096) : 1...` | sweep |
+| `ARC_GEMM_TM` | engine_setup.h:518 | gemm_tm | prompt GEMM | `const int t = getenv("ARC_GEMM_TM") ? atoi(getenv("ARC_GEMM_TM")) : 16;` | sweep |
+| `ARC_GEMM_WGY` | engine.h:1743, engine_h8.h:623, xe2/engine_xe2.h:887 (+2) | h8_matmul1, matmul1, x16_act, xw_gu_matmul, xw_tile_for | prompt GEMM | `static const int wgy_max = getenv("ARC_GEMM_WGY") ? atoi(getenv("ARC_GEMM_WGY")) : 8;` | sweep |
+| `ARC_GEMM_WPF` | xe2/engine_xe2.h:419 | xe2_wpf | prompt GEMM | `static const int n = getenv("ARC_GEMM_WPF") ? atoi(getenv("ARC_GEMM_WPF")) : 0;` | sweep |
+| `ARC_X16` | xe2/engine_xe2.h:827 | x16_wanted | prompt GEMM | `return tr \|\| (getenv("ARC_X16") && atoi(getenv("ARC_X16")) != 0 && cl_.xmx && (!zrt::integrated() \|\| cl_.sg...` | sweep |
+| `ARC_X16_CG` | xe2/engine_xe2.h:809 | x16_cg_for | prompt GEMM | `const int c = getenv("ARC_X16_CG") ? atoi(getenv("ARC_X16_CG")) : 1;` | per kind |
+| `ARC_X16_GRF` | xe2/engine_xe2.h:817 | x16_kernel | prompt GEMM | `static const bool g128 = getenv("ARC_X16_GRF") && std::string(getenv("ARC_X16_GRF")) == "128";` | **none: to check** |
+| `ARC_X16_TM` | xe2/engine_xe2.h:791 | x16_tm | prompt GEMM | `const int t = getenv("ARC_X16_TM") ? atoi(getenv("ARC_X16_TM")) : 32;` | per kind |
+| `ARC_X16_TRY` | xe2/engine_xe2.h:824, xe2/engine_xe2.h:1001 | x16_check, x16_wanted | prompt GEMM | `const bool tr = getenv("ARC_X16_TRY") && atoi(getenv("ARC_X16_TRY")) != 0;` | per kind |
+| `ARC_INK_STACK` | engine_inkling.h:240 | ink_stack_load | stacked matrices | `static const bool off = getenv("ARC_INK_STACK") && atoi(getenv("ARC_INK_STACK")) == 0;  // (A/B: the matric...` | **none: to check** |
+| `ARC_NO_GU_FLT` | engine_load.h:803 | load_weights | stacked matrices | `} else if ((hp.qwen3 \|\| (float_type(f_.get(p + "ffn_gate.weight").type) && !getenv("ARC_NO_GU_FLT"))) &&` | **none: to check** |
+| `ARC_NO_QKV_FLT` | engine_stream.h:785 | load_attn | stacked matrices | `const bool stack = (hp.qwen3 \|\| (float_type(f_.get(p + "attn_q.weight").type) && !getenv("ARC_NO_QKV_FLT"))...` | **none: to check** |
+| `ARC_NO_QZ_FLT` | engine_load.h:399 | load_gdn_in | stacked matrices | `if (float_type(pq->type) && float_type(pz->type) && !getenv("ARC_NO_QZ_FLT")) {` | **none: to check** |
+| `ARC_NO_QZAB16` | engine_load.h:424 | load_gdn_in | stacked matrices | `L.qz_ab = !(hp.hc && fn_ab32() && !tp_on()) && type == GGML_Q8_0 && nab % 16 == 0 && !getenv("ARC_NO_QZAB16");` | **none: to check** |
+| `ARC_FN_Q2` | engine.h:1393 | q2_init | two-pass GEMMs | `q2mm_ = (q2_ && !g4_one) \|\| (hp.hc && getenv("ARC_FN_Q2") && atoi(getenv("ARC_FN_Q2")) > 0) \|\| (hp.qwen3 &&...` | **none: to check** |
+| `ARC_G4_ONE` | engine.h:1389 | q2_init | two-pass GEMMs | `(getenv("ARC_G4_ONE") && atoi(getenv("ARC_G4_ONE")) != 0));` | **none: to check** |
+| `ARC_G4_Q2MM` | engine.h:1388 | q2_init | two-pass GEMMs | `const bool g4_one = hp.gemma && ((hp.n_ple > 0 && !(getenv("ARC_G4_Q2MM") && atoi(getenv("ARC_G4_Q2MM")) !=...` | **none: to check** |
+| `ARC_Q3_Q2` | engine.h:1392 | q2_init | two-pass GEMMs | `const bool q3_one = getenv("ARC_Q3_Q2") && atoi(getenv("ARC_Q3_Q2")) == 0;` | **none: to check** |
+| `ARC_IQ3S_TILE` | engine_load.h:105 | iq3t_env | weight form (W8 resident / just in time, tiles) | `static const bool on = getenv("ARC_IQ3S_TILE") && atoi(getenv("ARC_IQ3S_TILE")) != 0;` | sweep |
+| `ARC_W8_MINS` | engine_load.h:592 | w8_mins_on | weight form (W8 resident / just in time, tiles) | `static const int env = getenv("ARC_W8_MINS") ? atoi(getenv("ARC_W8_MINS")) : -1;` | **none: to check** |
+| `ARC_W8_PARTIAL_GB` | engine_load.h:207, engine_load.h:212, engine_load.h:240 | w8_part_auto, w8_part_auto_env, w8_part_take | weight form (W8 resident / just in time, tiles) | `static const bool v = !getenv("ARC_W8_PARTIAL_GB") \|\| std::string(getenv("ARC_W8_PARTIAL_GB")) == "auto";` | sweep |
+| `ARC_W8_RESIDENT` | engine_setup.h:394 | plan_weights | weight form (W8 resident / just in time, tiles) | `static const bool keep = getenv("ARC_W8_RESIDENT") != nullptr;  // (A/B)` | per kind |
+| `ARC_140T` | xe2/engine_xe2.h:80, xe2/engine_xe2.h:95 | p140_off_resident, p140_wanted | XMX / GPU kind | `const char* e = getenv("ARC_140T");` | sweep |
+| `ARC_140T_MIN` | xe2/engine_xe2.h:27 | p140_min | XMX / GPU kind | `static const int e = getenv("ARC_140T_MIN") ? atoi(getenv("ARC_140T_MIN")) : 0;` | **none: to check** |
+| `ARC_140T_RES` | engine_setup.h:437 | plan_weights | XMX / GPU kind | `static const bool res = getenv("ARC_140T_RES") && atoi(getenv("ARC_140T_RES")) != 0;` | user |
+| `ARC_NO_SG8` | clrt.h:229, clrt.h:1450 | batch_default_for, init | XMX / GPU kind | `if (getenv("ARC_NO_SG8") && atoi(getenv("ARC_NO_SG8")) != 0) sg8 = false;` | per kind |
+| `ARC_NO_XMX` | clrt.h:1470 | init | XMX / GPU kind | `if (getenv("ARC_NO_XMX") && atoi(getenv("ARC_NO_XMX")) != 0) xmx = false;` | sweep |
+| `ARC_XMX_FORCE` | engine.h:474, engine_setup.h:855 | init, xmx_check | XMX / GPU kind | `const bool xmx_force = getenv("ARC_XMX_FORCE") && atoi(getenv("ARC_XMX_FORCE")) != 0;` | sweep |
+| `ARC_XMX_SPEED` | engine_setup.h:854 | xmx_check | XMX / GPU kind | `const bool spd_env = getenv("ARC_XMX_SPEED") && atoi(getenv("ARC_XMX_SPEED")) != 0;` | per kind |
+| `ARC_XMX_TRY` | engine.h:476, engine.h:480, engine_setup.h:526 (+5) | gemm_kernel, init, moe_gemm_kernel, p140_wanted, xe2_grf128, xmx_check, xmx_defs | XMX / GPU kind | `if (!opt.dry && cl_.xmx && sg8_igpu && !xmx_force && !p140_ && !getenv("ARC_XMX_TRY")) {` | per kind |
+| `ARC_140T_BIG` | xe2/engine_xw.h:493 | p140_big_env | XMX wide-tile GEMM (gemm_xw) | `static const bool on = getenv("ARC_140T_BIG") && atoi(getenv("ARC_140T_BIG")) != 0;` | per kind |
+| `ARC_GEMM_XW` | xe2/engine_xw.h:68 | xw_wanted | XMX wide-tile GEMM (gemm_xw) | `const char* e = getenv("ARC_GEMM_XW");` | per kind |
+| `ARC_GEMM_XW_2D` | xe2/engine_xw.h:225, xe2/engine_xw.h:1153 | xw_2d_level, xw_init | XMX wide-tile GEMM (gemm_xw) | `static const char* e = getenv("ARC_GEMM_XW_2D");` | sweep |
+| `ARC_GEMM_XW_BG` | xe2/engine_xw.h:660 | xw_bg_env | XMX wide-tile GEMM (gemm_xw) | `static const bool on = getenv("ARC_GEMM_XW_BG") && atoi(getenv("ARC_GEMM_XW_BG")) != 0;` | per kind |
+| `ARC_GEMM_XW_BIG` | xe2/engine_xw.h:505 | xw_big_on | XMX wide-tile GEMM (gemm_xw) | `static const int env = getenv("ARC_GEMM_XW_BIG") ? atoi(getenv("ARC_GEMM_XW_BIG")) : -1;` | sweep |
+| `ARC_GEMM_XW_C_RND` | xe2/engine_xw.h:1086 | xw_init | XMX wide-tile GEMM (gemm_xw) | `static const char* rnd_env = getenv("ARC_GEMM_XW_C_RND");` | sweep |
+| `ARC_GEMM_XW_DB` | xe2/engine_xw.h:254 | xw_db_env | XMX wide-tile GEMM (gemm_xw) | `static const int e = getenv("ARC_GEMM_XW_DB") ? std::max(0, std::min(2, atoi(getenv("ARC_GEMM_XW_DB")))) : -1;` | sweep |
+| `ARC_GEMM_XW_DIAG` | xe2/engine_xw.h:1358 | xw_check | XMX wide-tile GEMM (gemm_xw) | `static const bool diag = getenv("ARC_GEMM_XW_DIAG") && atoi(getenv("ARC_GEMM_XW_DIAG")) != 0;` | **none: to check** |
+| `ARC_GEMM_XW_DPASW` | xe2/engine_xw.h:630 | xw_dpasw_env | XMX wide-tile GEMM (gemm_xw) | `static const char* e = getenv("ARC_GEMM_XW_DPASW");` | per kind |
+| `ARC_GEMM_XW_EPI2` | xe2/engine_xw.h:283 | xw_epi2 | XMX wide-tile GEMM (gemm_xw) | `static const int e = getenv("ARC_GEMM_XW_EPI2") ? (atoi(getenv("ARC_GEMM_XW_EPI2")) != 0 ? 1 : 0) : -1;` | sweep |
+| `ARC_GEMM_XW_GRF` | xe2/engine_xw.h:47 | xw_grf256 | XMX wide-tile GEMM (gemm_xw) | `static const char* e = getenv("ARC_GEMM_XW_GRF");` | **none: to check** |
+| `ARC_GEMM_XW_GU` | xe2/engine_xw.h:240, xe2/engine_xw.h:859 | xw_gu_env, xw_gu_matmul | XMX wide-tile GEMM (gemm_xw) | `static const int e = getenv("ARC_GEMM_XW_GU") ? (atoi(getenv("ARC_GEMM_XW_GU")) != 0 ? 1 : 0) : -1;` | sweep |
+| `ARC_GEMM_XW_K128` | xe2/engine_xw.h:201 | xw_k128 | XMX wide-tile GEMM (gemm_xw) | `static const bool v = getenv("ARC_GEMM_XW_K128") && atoi(getenv("ARC_GEMM_XW_K128")) != 0;` | **none: to check** |
+| `ARC_GEMM_XW_LANES` | xe2/engine_xw.h:34 | xw_lanes | XMX wide-tile GEMM (gemm_xw) | `static const int e = getenv("ARC_GEMM_XW_LANES") ? atoi(getenv("ARC_GEMM_XW_LANES")) : 0;` | **none: to check** |
+| `ARC_GEMM_XW_LOCK` | xe2/engine_xw.h:195 | xw_lock | XMX wide-tile GEMM (gemm_xw) | `static const bool v = getenv("ARC_GEMM_XW_LOCK") && atoi(getenv("ARC_GEMM_XW_LOCK")) != 0;` | sweep |
+| `ARC_GEMM_XW_LSC` | xe2/engine_xw.h:656, xe2/engine_xw.h:1145 | xw_init, xw_lsc_opt | XMX wide-tile GEMM (gemm_xw) | `static const int e = getenv("ARC_GEMM_XW_LSC") ? atoi(getenv("ARC_GEMM_XW_LSC")) : 0;` | per kind |
+| `ARC_GEMM_XW_NC` | xe2/engine_xw.h:53, xe2/engine_xw.h:506, xe2/engine_xw.h:996 | xw_big_on, xw_nc, xw_shape_on | XMX wide-tile GEMM (gemm_xw) | `static const int e = getenv("ARC_GEMM_XW_NC") ? atoi(getenv("ARC_GEMM_XW_NC")) : 0;` | sweep |
+| `ARC_GEMM_XW_NC_E` | xe2/engine_xw.h:971 | xw_nc_e | XMX wide-tile GEMM (gemm_xw) | `const int e = getenv("ARC_GEMM_XW_NC_E") ? atoi(getenv("ARC_GEMM_XW_NC_E")) : 0;` | sweep |
+| `ARC_GEMM_XW_PACK` | xe2/engine_xw.h:146 | xw_pack_env | XMX wide-tile GEMM (gemm_xw) | `const char* e = getenv("ARC_GEMM_XW_PACK");` | per kind |
+| `ARC_GEMM_XW_PF` | xe2/engine_xw.h:79, xe2/engine_xw.h:94, xe2/engine_xw.h:97 (+1) | xw_pf, xw_pf_eff, xw_pf_max_def, xw_pfd | XMX wide-tile GEMM (gemm_xw) | `const int e = getenv("ARC_GEMM_XW_PF") ? atoi(getenv("ARC_GEMM_XW_PF")) : 1;` | sweep |
+| `ARC_GEMM_XW_PFD` | xe2/engine_xw.h:86, xe2/engine_xw.h:94, xe2/engine_xw.h:97 | xw_pf_max_def, xw_pfd | XMX wide-tile GEMM (gemm_xw) | `const int e = getenv("ARC_GEMM_XW_PFD") ? atoi(getenv("ARC_GEMM_XW_PFD")) : 1;` | sweep |
+| `ARC_GEMM_XW_PFL` | xe2/engine_xw.h:128 | xw_pfl_form | XMX wide-tile GEMM (gemm_xw) | `static const int e = getenv("ARC_GEMM_XW_PFL") ? std::clamp(atoi(getenv("ARC_GEMM_XW_PFL")), 0, 2) : -1;` | sweep |
+| `ARC_GEMM_XW_PTR` | xe2/engine_xw.h:483 | xw_ptr | XMX wide-tile GEMM (gemm_xw) | `static const int e = getenv("ARC_GEMM_XW_PTR") ? (atoi(getenv("ARC_GEMM_XW_PTR")) != 0 ? 1 : 0) : -1;` | sweep |
+| `ARC_GEMM_XW_SHAPE` | xe2/engine_xw.h:995 | xw_shape_on | XMX wide-tile GEMM (gemm_xw) | `static const int env = getenv("ARC_GEMM_XW_SHAPE") ? atoi(getenv("ARC_GEMM_XW_SHAPE")) : -1;` | per kind |
+| `ARC_GEMM_XW_SLM` | xe2/engine_xw.h:271, xe2/engine_xw.h:507 | xw_big_on, xw_slm_wgy | XMX wide-tile GEMM (gemm_xw) | `const int v = getenv("ARC_GEMM_XW_SLM") ? atoi(getenv("ARC_GEMM_XW_SLM")) : 0;` | **none: to check** |
+| `ARC_GEMM_XW_SLM_CPS` | xe2/engine_xw.h:327, xe2/engine_xw.h:337, xe2/engine_xw.h:341 | xw_big_make | XMX wide-tile GEMM (gemm_xw) | `(!getenv("ARC_GEMM_XW_SLM_CPS") \|\| atoi(getenv("ARC_GEMM_XW_SLM_CPS")) == 1)) {` | sweep |
+| `ARC_GEMM_XW_SLM_TILE` | xe2/engine_xw.h:314, xe2/engine_xw.h:326, xe2/engine_xw.h:337 | xw_big_make | XMX wide-tile GEMM (gemm_xw) | `if (const char* t = getenv("ARC_GEMM_XW_SLM_TILE")) {  // (TMxCOLS, each 16 / 32 / 64: xw_peak --all's forms)` | sweep |
+| `ARC_GEMM_XW_SLM_WG` | xe2/engine_xw.h:321, xe2/engine_xw.h:386 | xw_big_gu_make, xw_big_make | XMX wide-tile GEMM (gemm_xw) | `if (const char* w = getenv("ARC_GEMM_XW_SLM_WG")) {` | sweep |
+| `ARC_GEMM_XW_SLM_WG_GU` | xe2/engine_xw.h:380 | xw_big_gu_make | XMX wide-tile GEMM (gemm_xw) | `if (const char* w = getenv("ARC_GEMM_XW_SLM_WG_GU")) {` | per kind |
+| `ARC_GEMM_XW_SLM_WG_ROLES` | xe2/engine_xw.h:407 | xw_role_cfg | XMX wide-tile GEMM (gemm_xw) | `const char* e = getenv("ARC_GEMM_XW_SLM_WG_ROLES");` | per kind |
+| `ARC_GEMM_XW_SPLIT` | xe2/engine_xw.h:479 | xw_split_env | XMX wide-tile GEMM (gemm_xw) | `static const int e = getenv("ARC_GEMM_XW_SPLIT") ? atoi(getenv("ARC_GEMM_XW_SPLIT")) : -1;` | per kind |
+| `ARC_GEMM_XW_TM` | xe2/engine_xw.h:40, xe2/engine_xw.h:506, xe2/engine_xw.h:996 | xw_big_on, xw_shape_on, xw_tm | XMX wide-tile GEMM (gemm_xw) | `static const int e = getenv("ARC_GEMM_XW_TM") ? atoi(getenv("ARC_GEMM_XW_TM")) : 0;` | sweep |
+| `ARC_GEMM_XW_TRY` | xe2/engine_xw.h:62 | xw_try | XMX wide-tile GEMM (gemm_xw) | `static const bool t = getenv("ARC_GEMM_XW_TRY") && atoi(getenv("ARC_GEMM_XW_TRY")) != 0;` | **none: to check** |
+| `ARC_GEMM_XW_WGL` | xe2/engine_xw.h:608, xe2/engine_xw.h:679 | xw_wgl_b, xw_wgl_env | XMX wide-tile GEMM (gemm_xw) | `static const int e = getenv("ARC_GEMM_XW_WGL") ? atoi(getenv("ARC_GEMM_XW_WGL")) : -1;` | per kind |
+| `ARC_GEMM_XW_WGX` | xe2/engine_xw.h:178, xe2/engine_xw.h:179, xe2/engine_xw.h:186 (+3) | xw_big_on, xw_shape_on, xw_wgx | XMX wide-tile GEMM (gemm_xw) | `if (!getenv("ARC_GEMM_XW_WGX")) return 0;` | sweep |
 
 ## I. Dead paths
 
@@ -650,8 +824,41 @@ A form is a deletion candidate only if all three hold:
 
 It's deleted **during** migration, when its route reaches "old path deleted", with C's hashes equal. Not before.
 
+### The code side (the Developer, 2026-11-28, read at main ebd3bb5)
+
+The laptop's plan logs (A, Xe-LPG) saw **60 of the 200 kernels** in `zero/kernels/` (and `rd_block` / `rd_strip`, the
+read kernels whose source is in `engine.h`). Every one of the other 140 is
+named by host code (none is left without a caller), so none is dead by the first test alone. The plan logs of the
+other GPU kinds come from the kit (J), and the models the laptop does not run (Gemma 4, Flash Next, DeepSeek-V4.1,
+the vision and audio encoders, Whisper) from their own runs. So most unseen kernels are **not decided yet**:
+- **A model's own kernels, unseen because the laptop doesn't run that model or path** (decided on its runs):
+  `ops_inkling.cl` 23 (Inkling 2's DSpark drafter, its loop and BF16 forms), `ops_flashnext.cl` 20, `ops_vit.cl` 19,
+  `ops_ds41.cl` 19, `whisper.cl` 15, `ops_attn_g.cl` 10 (Gemma 4's attention), `ops_dflash.cl` 5, `asr.cl` 4, and
+  `moe_gateup` / `moe_down` (the 2-bit GSQ experts), `moe_gelu_mul` (Gemma 4's experts), `mtp_concat_hc` (Flash
+  Next's MTP block), `wh_ln_quant` / `wh_gelu_quant` (Whisper).
+- **A GPU kind's kernels, unseen on Xe-LPG** (decided by the kit): `gemm_x16.cl` 2, `gemm_x8.cl`, `gemm_xw.cl`,
+  `gemm_xw8.cl`, `attn_fx` (XMX flash attention), `gdn_chunk_x` / `gdn_chunk_x8`, `h8_unwgl` (`ARC_GEMM_XW_WGL`),
+  `gated_norm_h8r` / `attn_gate_h8r` (`ARC_H8_OUT`, Alchemist's default), `h8_act` / `h8_weights` (`ARC_H8_SB=1`,
+  per-256 H8; both switches are a kind's default in xe2-tuning.md).
+- **Reached by a switch or setup in a list, not by the laptop's defaults:** `attn_fa` (`--attn-f32`, and QSA's float
+  path), `qsa_fa_combine` (QSA), `attn_ps` (long prompts where the per-GPU table `qwen_ps` turns it on),
+  `attn_split` (decode rows of 128+ lanes: drafters, wide head groups), `gdn_chunk` (`ARC_GDN_CHUNK`, gpu_sweep),
+  `tp_rs_add` (`ARC_TP_OVERLAP`'s sums).
+
+**Candidates now**, forms that only a switch in no list reaches (H), or that no model reaches:
+
 | Form | Never chosen on | Not a guard because | Not reachable because | Deleted in |
 |---|---|---|---|---|
+| `moe_rg`'s `-DRG_IMUL` variant (`decode_moe.cl`) | Xe-LPG (A); no kind's default sets it | another form of the same product, an experiment's | only `ARC_RG_IMUL=1`, named in no list, doc or CHANGELOG (H) | the experts' step, when `moe_rg` moves |
+| `ARC_DBG_MOE`'s dump (`engine_moe.h`, `moe_dbg_gpu.bin`) | any kind (debug output) | writes a file, computes nothing | only `ARC_DBG_MOE=layer`, in no list (H) | when `layer_moe` moves |
+| `gemv -DQT=40`, the dense NVFP4 one-token GEMV | every kind: no model has a dense NVFP4 matrix (Inkling 2's NVFP4 tensors are its experts) | no type falls back to it | only a model with a dense NVFP4 matrix: none today. It spills 512-2,912 bytes on Xe-LPG (`gemm_check`) | the GEMV step, unless a model needs it first (then made spill-free) |
+
+The other unlisted switches (H) reach no form of their own: `ARC_MOE_ASCT=0` takes the tile kernel's form without
+the transposed scales, which the one-token tiles use anyway; `ARC_G4_RTILE=0` and `ARC_G4_RG_GU=0` take Gemma 4's
+other existing forms; `ARC_140T_MIN`, `ARC_MOE_G` and `ARC_MOE_RG_NY` move a threshold or a launch shape;
+`ARC_H8_E2E=0` skips a start check. **Data:** `I-kernels-all.txt`, `I-seen-mtl.txt`, `I-unref.tsv` (each unseen
+kernel, its file and its host references) in the inventory's data folder.
+
 
 ## J. The contributor kit
 
